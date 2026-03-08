@@ -649,23 +649,28 @@ if run_btn and project_name.strip():
                 # Build project_info from first turbine layer hit
                 canonical = project_name.strip()
                 project_info = None
+                # Turbine layers only have these fields (not ORGNR, LANSNAMN etc.)
+                t0 = turbines[0]
                 for lid in TURBINE_LAYERS:
-                    feats = query_vindbrukskollen(lid,
-                        f"PROJNAMN LIKE '%{project_name.strip()}%'",
-                        "PROJNAMN,KOMNAMN,ORGNAMN,ORGNR,ANTALVERK,CALPROD,LANSNAMN,EL_NAMN")
+                    try:
+                        feats = query_vindbrukskollen(lid,
+                            f"PROJNAMN LIKE '%{project_name.strip()}%'",
+                            "PROJNAMN,KOMNAMN,ORGNAMN,CALPROD")
+                    except Exception:
+                        continue
                     if feats:
                         a = feats[0]["attributes"]
                         canonical = a.get("PROJNAMN", project_name.strip())
                         project_info = {
                             "PROJNAMN": canonical,
-                            "OMRID": turbines[0].get("verkid", "?").rsplit("-", 1)[0],
+                            "OMRID": t0.get("verkid", "?").rsplit("-", 1)[0],
                             "KOMNAMN": a.get("KOMNAMN", ""),
                             "ORGNAMN": a.get("ORGNAMN"),
-                            "ORGNR": a.get("ORGNR"),
-                            "ANTALVERK": a.get("ANTALVERK") or len(turbines),
+                            "ORGNR": None,
+                            "ANTALVERK": len(turbines),
                             "CALPROD": a.get("CALPROD"),
-                            "LANSNAMN": a.get("LANSNAMN"),
-                            "EL_NAMN": a.get("EL_NAMN"),
+                            "LANSNAMN": None,
+                            "EL_NAMN": None,
                             "PBYGGSTART": None, "PDRIFT": None,
                         }
                         break
