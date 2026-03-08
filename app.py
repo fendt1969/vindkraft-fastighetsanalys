@@ -640,26 +640,66 @@ if run_btn and project_name.strip():
             st.stop()
 
         if not project_info:
-            suggestions = query_vindbrukskollen(PROJECT_AREA_LAYER,
-                f"PROJNAMN LIKE '%{project_name.strip()}%'", "PROJNAMN,OMRID,KOMNAMN")
-            msg = f"**{project_name}** hittades inte."
-            if suggestions:
-                msg += "\n\nLiknande projekt:\n"
-                for s in suggestions[:10]:
-                    a = s["attributes"]
-                    msg += f"- **{a['PROJNAMN']}** ({a['OMRID']}, {a['KOMNAMN']})\n"
-            st.error(msg)
-            st.stop()
+            # No project area in layer 2 — search turbine layers directly
+            st.write("Inget projektomr\u00e5de hittat, s\u00f6ker bland verk...")
+            turbines = fetch_turbines(project_name.strip(), sf)
+            if not turbines and sf:
+                turbines = fetch_turbines(project_name.strip(), None)
+            if turbines:
+                # Build project_info from first turbine layer hit
+                canonical = project_name.strip()
+                project_info = None
+                for lid in TURBINE_LAYERS:
+                    feats = query_vindbrukskollen(lid,
+                        f"PROJNAMN LIKE '%{project_name.strip()}%'",
+                        "PROJNAMN,KOMNAMN,ORGNAMN,ORGNR,ANTALVERK,CALPROD,LANSNAMN,EL_NAMN")
+                    if feats:
+                        a = feats[0]["attributes"]
+                        canonical = a.get("PROJNAMN", project_name.strip())
+                        project_info = {
+                            "PROJNAMN": canonical,
+                            "OMRID": turbines[0].get("verkid", "?").rsplit("-", 1)[0],
+                            "KOMNAMN": a.get("KOMNAMN", ""),
+                            "ORGNAMN": a.get("ORGNAMN"),
+                            "ORGNR": a.get("ORGNR"),
+                            "ANTALVERK": a.get("ANTALVERK") or len(turbines),
+                            "CALPROD": a.get("CALPROD"),
+                            "LANSNAMN": a.get("LANSNAMN"),
+                            "EL_NAMN": a.get("EL_NAMN"),
+                            "PBYGGSTART": None, "PDRIFT": None,
+                        }
+                        break
+                if not project_info:
+                    project_info = {
+                        "PROJNAMN": project_name.strip(), "OMRID": "?",
+                        "KOMNAMN": "", "ORGNAMN": None, "ORGNR": None,
+                        "ANTALVERK": len(turbines), "CALPROD": None,
+                        "LANSNAMN": None, "EL_NAMN": None,
+                        "PBYGGSTART": None, "PDRIFT": None,
+                    }
+                polygon = None
+                st.write(f"**{canonical}** \u2014 {len(turbines)} verk (inget projektomr\u00e5de)")
+            else:
+                suggestions = query_vindbrukskollen(PROJECT_AREA_LAYER,
+                    f"PROJNAMN LIKE '%{project_name.strip()}%'", "PROJNAMN,OMRID,KOMNAMN")
+                msg = f"**{project_name}** hittades inte."
+                if suggestions:
+                    msg += "\n\nLiknande projekt:\n"
+                    for s in suggestions[:10]:
+                        a = s["attributes"]
+                        msg += f"- **{a['PROJNAMN']}** ({a['OMRID']}, {a['KOMNAMN']})\n"
+                st.error(msg)
+                st.stop()
+        else:
+            canonical = project_info["PROJNAMN"]
+            st.write(f"**{canonical}** ({project_info['OMRID']}), {project_info['KOMNAMN']}")
 
-        canonical = project_info["PROJNAMN"]
-        st.write(f"**{canonical}** ({project_info['OMRID']}), {project_info['KOMNAMN']}")
-
-        st.write("H\u00e4mtar vindkraftverk...")
-        turbines = fetch_turbines(canonical, sf)
-        if not turbines:
-            st.error("Inga verk hittades.")
-            st.stop()
-        st.write(f"**{len(turbines)}** verk")
+            st.write("H\u00e4mtar vindkraftverk...")
+            turbines = fetch_turbines(canonical, sf)
+            if not turbines:
+                st.error("Inga verk hittades.")
+                st.stop()
+            st.write(f"**{len(turbines)}** verk")
 
         st.write("S\u00f6ker fastigheter via OpenStreetMap...")
         center_lat = sum(t["lat"] for t in turbines) / len(turbines)
