@@ -275,9 +275,12 @@ def fetch_turbines(project_name, status_filter=None):
         for feat in features:
             attrs = feat["attributes"]
             geom = feat["geometry"]
+            lat, lon = geom["y"], geom["x"]
+            if not (55 <= lat <= 70 and 10 <= lon <= 25):
+                continue  # skip turbines with invalid/missing coordinates
             all_turbines.append({
                 "verkid": attrs.get("VERKID", ""),
-                "lat": geom["y"], "lon": geom["x"],
+                "lat": lat, "lon": lon,
                 "total_height": attrs.get("TOTALHOJD"),
                 "max_power_mw": attrs.get("MAXEFFEKT"),
                 "annual_gwh": attrs.get("CALPROD"),
