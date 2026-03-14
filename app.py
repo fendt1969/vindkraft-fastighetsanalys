@@ -28,10 +28,196 @@ TURBINE_LAYERS = {
     9: "Nedmonterade", 10: "Överklagade", 11: "Uppgift saknas", 12: "Inte aktuella",
 }
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-BETA_A = -0.2811
-BETA_B = -0.3811
 DEFAULT_RADIUS_M = 3000
 DEFAULT_ASSUMED_VALUE_TKR = 3500
+
+# ─── W&W 2025 Regional Model ─────────────────────────────────────────────
+# Westlund & Wilhelmsson (2025), Table 3: hedonic coefficients per 2-km band.
+# Percentage = 100 * [exp(beta) - 1], Halvorsen & Palmquist (1980).
+# Only statistically significant (p<0.05) negative coefficients are used.
+# Band key = midpoint km (1, 3, 5, 7).
+
+WW2025_COEFF = {
+    # Region: {midpoint_km: beta}  — only significant negative betas
+    "south": {1: -0.183, 3: -0.111},                  # sign. 0-2, 2-4
+    "east":  {1: -0.091, 3: -0.102, 5: -0.046},       # sign. 0-2, 2-4, 4-6
+    "north": {1: -0.128},                              # sign. 0-2 only
+}
+
+# kommun → NUTS1 region mapping via län
+# SE2 = south, SE1 = east, SE3 = north
+_LAN_NUTS1 = {
+    "Stockholm": "east", "Uppsala": "east", "Södermanland": "east",
+    "Östergötland": "east", "Örebro": "east", "Västmanland": "east",
+    "Jönköping": "south", "Kronoberg": "south", "Kalmar": "south",
+    "Gotland": "south", "Blekinge": "south", "Skåne": "south",
+    "Halland": "south", "Västra Götaland": "south",
+    "Värmland": "north", "Dalarna": "north", "Gävleborg": "north",
+    "Västernorrland": "north", "Jämtland": "north",
+    "Västerbotten": "north", "Norrbotten": "north",
+}
+
+# All 290 kommuner → län (used to resolve NUTS1 from KOMNAMN)
+_KOMMUN_LAN = {
+    # Stockholm
+    "Botkyrka": "Stockholm", "Danderyd": "Stockholm", "Ekerö": "Stockholm",
+    "Haninge": "Stockholm", "Huddinge": "Stockholm", "Järfälla": "Stockholm",
+    "Lidingö": "Stockholm", "Nacka": "Stockholm", "Norrtälje": "Stockholm",
+    "Nykvarn": "Stockholm", "Nynäshamn": "Stockholm", "Salem": "Stockholm",
+    "Sigtuna": "Stockholm", "Sollentuna": "Stockholm", "Solna": "Stockholm",
+    "Stockholm": "Stockholm", "Sundbyberg": "Stockholm", "Södertälje": "Stockholm",
+    "Tyresö": "Stockholm", "Täby": "Stockholm", "Upplands Väsby": "Stockholm",
+    "Upplands-Bro": "Stockholm", "Vallentuna": "Stockholm", "Vaxholm": "Stockholm",
+    "Värmdö": "Stockholm", "Österåker": "Stockholm",
+    # Uppsala
+    "Enköping": "Uppsala", "Heby": "Uppsala", "Håbo": "Uppsala",
+    "Knivsta": "Uppsala", "Tierp": "Uppsala", "Uppsala": "Uppsala",
+    "Älvkarleby": "Uppsala", "Östhammar": "Uppsala",
+    # Södermanland
+    "Eskilstuna": "Södermanland", "Flen": "Södermanland", "Gnesta": "Södermanland",
+    "Katrineholm": "Södermanland", "Nyköping": "Södermanland",
+    "Oxelösund": "Södermanland", "Strängnäs": "Södermanland",
+    "Trosa": "Södermanland", "Vingåker": "Södermanland",
+    # Östergötland
+    "Boxholm": "Östergötland", "Finspång": "Östergötland", "Kinda": "Östergötland",
+    "Linköping": "Östergötland", "Mjölby": "Östergötland", "Motala": "Östergötland",
+    "Norrköping": "Östergötland", "Söderköping": "Östergötland",
+    "Vadstena": "Östergötland", "Valdemarsvik": "Östergötland",
+    "Ydre": "Östergötland", "Åtvidaberg": "Östergötland",
+    "Ödeshög": "Östergötland",
+    # Jönköping
+    "Aneby": "Jönköping", "Eksjö": "Jönköping", "Gislaved": "Jönköping",
+    "Gnosjö": "Jönköping", "Habo": "Jönköping", "Jönköping": "Jönköping",
+    "Mullsjö": "Jönköping", "Nässjö": "Jönköping", "Sävsjö": "Jönköping",
+    "Tranås": "Jönköping", "Vaggeryd": "Jönköping", "Vetlanda": "Jönköping",
+    "Värnamo": "Jönköping",
+    # Kronoberg
+    "Alvesta": "Kronoberg", "Lessebo": "Kronoberg", "Ljungby": "Kronoberg",
+    "Markaryd": "Kronoberg", "Tingsryd": "Kronoberg", "Uppvidinge": "Kronoberg",
+    "Växjö": "Kronoberg", "Älmhult": "Kronoberg",
+    # Kalmar
+    "Borgholm": "Kalmar", "Emmaboda": "Kalmar", "Hultsfred": "Kalmar",
+    "Högsby": "Kalmar", "Kalmar": "Kalmar", "Mönsterås": "Kalmar",
+    "Mörbylånga": "Kalmar", "Nybro": "Kalmar", "Oskarshamn": "Kalmar",
+    "Torsås": "Kalmar", "Vimmerby": "Kalmar", "Västervik": "Kalmar",
+    # Gotland
+    "Gotland": "Gotland",
+    # Blekinge
+    "Karlshamn": "Blekinge", "Karlskrona": "Blekinge", "Olofström": "Blekinge",
+    "Ronneby": "Blekinge", "Sölvesborg": "Blekinge",
+    # Skåne
+    "Bjuv": "Skåne", "Bromölla": "Skåne", "Burlöv": "Skåne",
+    "Båstad": "Skåne", "Eslöv": "Skåne", "Helsingborg": "Skåne",
+    "Hässleholm": "Skåne", "Höganäs": "Skåne", "Hörby": "Skåne",
+    "Höör": "Skåne", "Klippan": "Skåne", "Kristianstad": "Skåne",
+    "Kävlinge": "Skåne", "Landskrona": "Skåne", "Lomma": "Skåne",
+    "Lund": "Skåne", "Malmö": "Skåne", "Osby": "Skåne",
+    "Perstorp": "Skåne", "Simrishamn": "Skåne", "Sjöbo": "Skåne",
+    "Skurup": "Skåne", "Staffanstorp": "Skåne", "Svalöv": "Skåne",
+    "Svedala": "Skåne", "Tomelilla": "Skåne", "Trelleborg": "Skåne",
+    "Vellinge": "Skåne", "Ystad": "Skåne", "Åstorp": "Skåne",
+    "Ängelholm": "Skåne", "Örkelljunga": "Skåne", "Östra Göinge": "Skåne",
+    # Halland
+    "Falkenberg": "Halland", "Halmstad": "Halland", "Hylte": "Halland",
+    "Kungsbacka": "Halland", "Laholm": "Halland", "Varberg": "Halland",
+    # Västra Götaland
+    "Ale": "Västra Götaland", "Alingsås": "Västra Götaland",
+    "Bengtsfors": "Västra Götaland", "Bollebygd": "Västra Götaland",
+    "Borås": "Västra Götaland", "Dals-Ed": "Västra Götaland",
+    "Essunga": "Västra Götaland", "Falköping": "Västra Götaland",
+    "Färgelanda": "Västra Götaland", "Grästorp": "Västra Götaland",
+    "Gullspång": "Västra Götaland", "Göteborg": "Västra Götaland",
+    "Götene": "Västra Götaland", "Herrljunga": "Västra Götaland",
+    "Hjo": "Västra Götaland", "Härryda": "Västra Götaland",
+    "Karlsborg": "Västra Götaland", "Kungälv": "Västra Götaland",
+    "Lerum": "Västra Götaland", "Lidköping": "Västra Götaland",
+    "Lilla Edet": "Västra Götaland", "Lysekil": "Västra Götaland",
+    "Mariestad": "Västra Götaland", "Mark": "Västra Götaland",
+    "Mellerud": "Västra Götaland", "Munkedal": "Västra Götaland",
+    "Mölndal": "Västra Götaland", "Orust": "Västra Götaland",
+    "Partille": "Västra Götaland", "Skara": "Västra Götaland",
+    "Skövde": "Västra Götaland", "Sotenäs": "Västra Götaland",
+    "Stenungsund": "Västra Götaland", "Strömstad": "Västra Götaland",
+    "Svenljunga": "Västra Götaland", "Tanum": "Västra Götaland",
+    "Tibro": "Västra Götaland", "Tidaholm": "Västra Götaland",
+    "Tjörn": "Västra Götaland", "Tranemo": "Västra Götaland",
+    "Trollhättan": "Västra Götaland", "Töreboda": "Västra Götaland",
+    "Uddevalla": "Västra Götaland", "Ulricehamn": "Västra Götaland",
+    "Vara": "Västra Götaland", "Vårgårda": "Västra Götaland",
+    "Vänersborg": "Västra Götaland", "Åmål": "Västra Götaland",
+    "Öckerö": "Västra Götaland",
+    # Värmland
+    "Arvika": "Värmland", "Eda": "Värmland", "Filipstad": "Värmland",
+    "Forshaga": "Värmland", "Grums": "Värmland", "Hagfors": "Värmland",
+    "Hammarö": "Värmland", "Karlstad": "Värmland", "Kil": "Värmland",
+    "Kristinehamn": "Värmland", "Munkfors": "Värmland", "Storfors": "Värmland",
+    "Sunne": "Värmland", "Säffle": "Värmland", "Torsby": "Värmland",
+    "Årjäng": "Värmland",
+    # Örebro
+    "Askersund": "Örebro", "Degerfors": "Örebro", "Hallsberg": "Örebro",
+    "Hällefors": "Örebro", "Karlskoga": "Örebro", "Kumla": "Örebro",
+    "Laxå": "Örebro", "Lekeberg": "Örebro", "Lindesberg": "Örebro",
+    "Ljusnarsberg": "Örebro", "Nora": "Örebro", "Örebro": "Örebro",
+    # Västmanland
+    "Arboga": "Västmanland", "Fagersta": "Västmanland", "Hallstahammar": "Västmanland",
+    "Kungsör": "Västmanland", "Köping": "Västmanland", "Norberg": "Västmanland",
+    "Sala": "Västmanland", "Skinnskatteberg": "Västmanland",
+    "Surahammar": "Västmanland", "Västerås": "Västmanland",
+    # Dalarna
+    "Avesta": "Dalarna", "Borlänge": "Dalarna", "Falun": "Dalarna",
+    "Gagnef": "Dalarna", "Hedemora": "Dalarna", "Leksand": "Dalarna",
+    "Ludvika": "Dalarna", "Malung-Sälen": "Dalarna", "Mora": "Dalarna",
+    "Orsa": "Dalarna", "Rättvik": "Dalarna", "Smedjebacken": "Dalarna",
+    "Säter": "Dalarna", "Vansbro": "Dalarna", "Älvdalen": "Dalarna",
+    # Gävleborg
+    "Bollnäs": "Gävleborg", "Gävle": "Gävleborg", "Hofors": "Gävleborg",
+    "Hudiksvall": "Gävleborg", "Ljusdal": "Gävleborg", "Nordanstig": "Gävleborg",
+    "Ockelbo": "Gävleborg", "Ovanåker": "Gävleborg", "Sandviken": "Gävleborg",
+    "Söderhamn": "Gävleborg",
+    # Västernorrland
+    "Härnösand": "Västernorrland", "Kramfors": "Västernorrland",
+    "Sollefteå": "Västernorrland", "Sundsvall": "Västernorrland",
+    "Timrå": "Västernorrland", "Ånge": "Västernorrland",
+    "Örnsköldsvik": "Västernorrland",
+    # Jämtland
+    "Berg": "Jämtland", "Bräcke": "Jämtland", "Härjedalen": "Jämtland",
+    "Krokom": "Jämtland", "Ragunda": "Jämtland", "Strömsund": "Jämtland",
+    "Åre": "Jämtland", "Östersund": "Jämtland",
+    # Västerbotten
+    "Bjurholm": "Västerbotten", "Dorotea": "Västerbotten",
+    "Lycksele": "Västerbotten", "Malå": "Västerbotten",
+    "Nordmaling": "Västerbotten", "Norsjö": "Västerbotten",
+    "Robertsfors": "Västerbotten", "Skellefteå": "Västerbotten",
+    "Sorsele": "Västerbotten", "Storuman": "Västerbotten",
+    "Umeå": "Västerbotten", "Vilhelmina": "Västerbotten",
+    "Vindeln": "Västerbotten", "Vännäs": "Västerbotten",
+    "Åsele": "Västerbotten",
+    # Norrbotten
+    "Arjeplog": "Norrbotten", "Arvidsjaur": "Norrbotten",
+    "Boden": "Norrbotten", "Gällivare": "Norrbotten",
+    "Haparanda": "Norrbotten", "Jokkmokk": "Norrbotten",
+    "Kalix": "Norrbotten", "Kiruna": "Norrbotten",
+    "Luleå": "Norrbotten", "Pajala": "Norrbotten",
+    "Piteå": "Norrbotten", "Älvsbyn": "Norrbotten",
+    "Överkalix": "Norrbotten", "Övertorneå": "Norrbotten",
+}
+
+
+def get_nuts1_region(kommun_name):
+    """Return NUTS1 region ('south', 'east', 'north') from kommun name."""
+    lan = _KOMMUN_LAN.get(kommun_name)
+    if lan:
+        return _LAN_NUTS1.get(lan, "south")
+    # Fuzzy: try matching start of name (handles "Marks kommun" etc.)
+    for k, v in _KOMMUN_LAN.items():
+        if kommun_name.startswith(k) or k.startswith(kommun_name):
+            return _LAN_NUTS1.get(v, "south")
+    return "south"  # default fallback
+
+
+def get_nuts1_label(region):
+    """Human-readable label for NUTS1 region."""
+    return {"south": "Syd (SE2)", "east": "Öst (SE1)", "north": "Norr (SE3)"}[region]
 
 
 # ─── Vindbrukskollen API ─────────────────────────────────────────────────
@@ -142,15 +328,49 @@ def fetch_properties(center_lat, center_lon, search_radius_m=4500):
     return places
 
 
-# ─── Model ────────────────────────────────────────────────────────────────
+# ─── Model (W&W 2025 Regional) ────────────────────────────────────────────
 
-def calc_beta(distance_km):
-    return BETA_A * math.exp(BETA_B * distance_km)
+def calc_reduction_pct_2025(distance_km, region="south"):
+    """Interpolate reduction % from W&W 2025 Table 3 regional coefficients.
 
-def calc_reduction_pct(beta):
-    return (math.exp(beta) - 1) * 100
+    Uses linear interpolation between 2-km band midpoints.
+    Returns negative percentage (e.g. -16.7).
+    """
+    coeff = WW2025_COEFF.get(region, WW2025_COEFF["south"])
+    if not coeff:
+        return 0.0
 
-def analyze_properties(turbines, places, max_radius_m):
+    # Sorted midpoints and their % reductions
+    midpoints = sorted(coeff.keys())
+    reductions = [100 * (math.exp(coeff[m]) - 1) for m in midpoints]
+
+    if distance_km <= midpoints[0]:
+        # Closer than first midpoint: use first band value
+        return reductions[0]
+
+    # Beyond last significant midpoint: taper to zero at midpoint + 2 km
+    last_mp = midpoints[-1]
+    last_red = reductions[-1]
+    taper_end = last_mp + 2.0  # effect reaches zero 2 km past last midpoint
+
+    if distance_km >= taper_end:
+        return 0.0
+
+    # Interpolate between midpoints
+    for j in range(len(midpoints) - 1):
+        if midpoints[j] <= distance_km <= midpoints[j + 1]:
+            t = (distance_km - midpoints[j]) / (midpoints[j + 1] - midpoints[j])
+            return reductions[j] + t * (reductions[j + 1] - reductions[j])
+
+    # Between last midpoint and taper end
+    if distance_km > last_mp:
+        t = (distance_km - last_mp) / (taper_end - last_mp)
+        return last_red * (1 - t)
+
+    return 0.0
+
+
+def analyze_properties(turbines, places, max_radius_m, region="south"):
     results = []
     for place in places:
         min_dist = float("inf")
@@ -162,12 +382,11 @@ def analyze_properties(turbines, places, max_radius_m):
                 nearest = i
         if min_dist <= max_radius_m:
             dist_km = min_dist / 1000.0
-            beta = calc_beta(dist_km)
-            red_pct = calc_reduction_pct(beta)
+            red_pct = calc_reduction_pct_2025(dist_km, region)
             results.append({
                 "name": place["name"], "lat": place["lat"], "lon": place["lon"],
                 "distance_m": round(min_dist), "nearest_turbine": nearest,
-                "beta": beta, "reduction_pct": red_pct,
+                "reduction_pct": red_pct, "region": region,
             })
     results.sort(key=lambda r: r["distance_m"])
     return results
@@ -175,7 +394,7 @@ def analyze_properties(turbines, places, max_radius_m):
 
 # ─── PDF Generation ──────────────────────────────────────────────────────
 
-def generate_fastigheter_pdf(project_info, turbines, properties, radius_m, output_path):
+def generate_fastigheter_pdf(project_info, turbines, properties, radius_m, output_path, region="south"):
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import cm
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -208,7 +427,7 @@ def generate_fastigheter_pdf(project_info, turbines, properties, radius_m, outpu
         canvas.saveState()
         canvas.setFont("Helvetica", 8); canvas.setFillColor(grey)
         canvas.drawCentredString(A4[0]/2, A4[1]-20, "Vindkraftens inverkan p\u00e5 fastighetsv\u00e4rden")
-        canvas.drawCentredString(A4[0]/2, A4[1]-32, f"{proj_name}, {kommun} kommun - Kontinuerlig modell, {radius_km:.0f} km radie")
+        canvas.drawCentredString(A4[0]/2, A4[1]-32, f"{proj_name}, {kommun} kommun \u2014 W&W 2025 regional ({get_nuts1_label(region)}), {radius_km:.0f} km radie")
         canvas.drawCentredString(A4[0]/2, 25, f"Sida {page_num[0]}")
         canvas.restoreState()
 
@@ -223,7 +442,7 @@ def generate_fastigheter_pdf(project_info, turbines, properties, radius_m, outpu
 
     story = []
     story.append(Paragraph("Vindkraftens inverkan p\u00e5 fastighetsv\u00e4rden", title_s))
-    story.append(Paragraph(f"{proj_name}, {kommun} kommun - Kontinuerlig modell, {radius_km:.0f} km radie", subtitle_s))
+    story.append(Paragraph(f"{proj_name}, {kommun} kommun \u2014 W&amp;W 2025 regional ({get_nuts1_label(region)}), {radius_km:.0f} km radie", subtitle_s))
 
     # Section 1: Turbines
     story.append(Paragraph("<b>1. Planerade vindkraftverk</b>", heading_s))
@@ -239,44 +458,53 @@ def generate_fastigheter_pdf(project_info, turbines, properties, radius_m, outpu
 
     # Section 2: Method
     story.append(Paragraph("<b>2. Metod och modell</b>", heading_s))
-    story.append(Paragraph('K\u00e4lla: Westlund &amp; Wilhelmsson (2021), "The Socio-Economic Cost of Wind Turbines: A Swedish Case Study", <i>Sustainability</i>, 13, 6892.', body_s))
+    story.append(Paragraph('K\u00e4lla: Westlund &amp; Wilhelmsson (2025), "Capitalisation of onshore wind turbines on property prices in Sweden: The need to compensate for negative externalities", <i>Economic Analysis and Policy</i>, 87, 1452\u20131468.', body_s))
     story.append(Spacer(1, 4))
-    story.append(Paragraph('Studien anv\u00e4nder en hedonisk prismodell baserad p\u00e5 ca 69 000 sm\u00e5husf\u00f6rs\u00e4ljningar i Sverige 2013\u20132018.', body_s))
+    story.append(Paragraph('Studien anv\u00e4nder en hedonisk prismodell med staggered difference-in-difference baserad p\u00e5 \u00f6ver 600 000 fastighetsf\u00f6rs\u00e4ljningar i Sverige 2005\u20132018. Modellen \u00e4r regionalt differentierad (NUTS1: Syd, \u00d6st, Norr) med 2 km-intervaller.', body_s))
     story.append(Spacer(1, 4))
-    story.append(Paragraph("beta(d) = -0.2811 * exp(-0.3811 * d)", code_s))
-    story.append(Paragraph("Reduktion(d) = (exp(beta(d)) - 1) * 100%", code_s))
-    story.append(Spacer(1, 4))
-    story.append(Paragraph('d\u00e4r d = avst\u00e5nd i km till n\u00e4rmaste vindkraftverk.', body_s))
+    story.append(Paragraph("Reduktion = 100 \u00d7 [exp(\u03b2) \u2013 1] %", code_s))
+    story.append(Paragraph(f"Region f\u00f6r detta projekt: {get_nuts1_label(region)}", body_s))
     story.append(Spacer(1, 8))
 
-    # Section 3: Verification
-    story.append(Paragraph("<b>3. Modellverifiering mot studiens data</b>", heading_s))
-    verification = [
-        ("0-2 km", "1.0 km", "-0.1920", "-0.1920", "-17.5%", "-17.5%"),
-        ("2-4 km", "3.0 km", "-0.0896", "-0.0896", "-8.6%", "-8.6%"),
-        ("4-6 km", "5.0 km", "-0.0601", "-0.0418", "-5.8%", "-4.1%"),
-        ("6-8 km", "7.0 km", "-0.0220", "-0.0195", "-2.2%", "-1.9%"),
+    # Section 3: Regional coefficients table
+    story.append(Paragraph("<b>3. Regionala koefficienter (Table 3, W&amp;W 2025)</b>", heading_s))
+    coeff_data = [["Avst\u00e5nd", "Syd (\u03b2)", "Syd %", "\u00d6st (\u03b2)", "\u00d6st %", "Norr (\u03b2)", "Norr %"]]
+    all_bands = [
+        ("0\u20132 km", {"south": -0.183, "east": -0.091, "north": -0.128}),
+        ("2\u20134 km", {"south": -0.111, "east": -0.102, "north": None}),
+        ("4\u20136 km", {"south": None, "east": -0.046, "north": None}),
     ]
-    vdata = [["Zon", "Mittpkt", "Studie-\u03b2", "Modell-\u03b2", "Studie-%", "Modell-%"]]
-    for row in verification: vdata.append(list(row))
-    vtable = Table(vdata, colWidths=[70, 55, 65, 65, 60, 60])
-    vtable.setStyle(TableStyle([
-        ('FONT', (0,0), (-1,0), 'Helvetica-Bold', 8), ('FONT', (0,1), (-1,-1), 'Helvetica', 8),
+    for label, betas in all_bands:
+        row = [label]
+        for reg in ["south", "east", "north"]:
+            b = betas.get(reg)
+            if b is not None:
+                row.append(f"{b:.3f}")
+                row.append(f"{100*(math.exp(b)-1):.1f}%")
+            else:
+                row.append("\u2013")
+                row.append("ej sign.")
+        coeff_data.append(row)
+    ctable = Table(coeff_data, colWidths=[55, 50, 50, 50, 50, 50, 50])
+    ctable.setStyle(TableStyle([
+        ('FONT', (0,0), (-1,0), 'Helvetica-Bold', 7.5), ('FONT', (0,1), (-1,-1), 'Helvetica', 7.5),
         ('ALIGN', (1,0), (-1,-1), 'CENTER'), ('ALIGN', (0,0), (0,-1), 'LEFT'),
         ('LINEBELOW', (0,0), (-1,0), 0.5, black), ('LINEBELOW', (0,-1), (-1,-1), 0.5, black),
         ('TOPPADDING', (0,0), (-1,-1), 2), ('BOTTOMPADDING', (0,0), (-1,-1), 2),
     ]))
-    story.append(vtable)
+    story.append(ctable)
+    story.append(Spacer(1, 4))
+    story.append(Paragraph('Enbart statistiskt signifikanta koefficienter (p&lt;0,05) anv\u00e4nds. Linj\u00e4r interpolering mellan bandmittpunkter.', italic_s))
     story.append(Spacer(1, 10))
 
-    # Section 4: Reduction curve
-    story.append(Paragraph(f"<b>4. Reduktionskurva (0\u2013{radius_km:.0f} km)</b>", heading_s))
-    rdata = [["Avst\u00e5nd", "beta(d)", "Reduktion"]]
+    # Section 4: Reduction curve for this region
+    story.append(Paragraph(f"<b>4. Reduktionskurva \u2014 {get_nuts1_label(region)} (0\u2013{radius_km:.0f} km)</b>", heading_s))
+    rdata = [["Avst\u00e5nd", "Reduktion"]]
     for d_m in range(0, radius_m + 1, 250):
         d_km = d_m / 1000.0
-        b = calc_beta(d_km); r = calc_reduction_pct(b)
-        rdata.append([f"{d_m} m", f"{b:.4f}", f"{r:.1f}%"])
-    rtable = Table(rdata, colWidths=[80, 80, 80])
+        r = calc_reduction_pct_2025(d_km, region)
+        rdata.append([f"{d_m} m", f"{r:.1f}%"])
+    rtable = Table(rdata, colWidths=[80, 80])
     rtable.setStyle(TableStyle([
         ('FONT', (0,0), (-1,0), 'Helvetica-Bold', 8), ('FONT', (0,1), (-1,-1), 'Helvetica', 8),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
@@ -289,8 +517,8 @@ def generate_fastigheter_pdf(project_info, turbines, properties, radius_m, outpu
     story.append(PageBreak())
     story.append(Paragraph(f"<b>5. Fastigheter inom {radius_km:.0f} km \u2013 individuell ber\u00e4kning</b>", heading_s))
     story.append(Spacer(1, 6))
-    col_widths = [22, 85, 42, 42, 48, 48, 48, 45]
-    header_row = ["#", "Fastighet", "Avst.(m)", "N\u00e4rmast", "Lat", "Lon", "beta", "Redukt."]
+    col_widths = [22, 100, 48, 48, 52, 52, 52]
+    header_row = ["#", "Fastighet", "Avst.(m)", "N\u00e4rmast", "Lat", "Lon", "Redukt."]
     page_size = 25
     for batch_start in range(0, n_props, page_size):
         if batch_start > 0: story.append(PageBreak())
@@ -299,7 +527,7 @@ def generate_fastigheter_pdf(project_info, turbines, properties, radius_m, outpu
         for j, p in enumerate(batch):
             pdata.append([str(batch_start+j+1), p["name"], str(p["distance_m"]),
                 f"VKV {p['nearest_turbine']+1}", f"{p['lat']:.4f}", f"{p['lon']:.4f}",
-                f"{p['beta']:.4f}", f"{p['reduction_pct']:.1f}%"])
+                f"{p['reduction_pct']:.1f}%"])
         ptable = Table(pdata, colWidths=col_widths)
         ptable.setStyle(TableStyle([
             ('FONT', (0,0), (-1,0), 'Helvetica-Bold', 7), ('FONT', (0,1), (-1,-1), 'Helvetica', 7),
@@ -322,7 +550,7 @@ def generate_fastigheter_pdf(project_info, turbines, properties, radius_m, outpu
     story.append(Paragraph(f"\u00a0\u00a0\u00a0- Medelv\u00e4rde: -{avg_red:.1f}%", body_s))
     story.append(Spacer(1, 16))
     story.append(Paragraph(f"Genererad: {today}", italic_s))
-    story.append(Paragraph("K\u00e4lla: Westlund &amp; Wilhelmsson (2021), Sustainability, 13, 6892.", italic_s))
+    story.append(Paragraph("K\u00e4lla: Westlund &amp; Wilhelmsson (2025), Economic Analysis and Policy, 87, 1452\u20131468.", italic_s))
     story.append(Paragraph("Kartdata: Lantm\u00e4teriet CC BY 4.0, OpenStreetMap (ODbL)", italic_s))
 
     doc.build(story, onFirstPage=page_footer, onLaterPages=page_footer)
@@ -409,7 +637,7 @@ def generate_ekonomi_pdf(project_info, turbines, properties, radius_m, assumed_v
         ParagraphStyle('h', parent=heading_s, fontSize=13)))
     if max_loss and min_loss:
         story.append(Paragraph(
-            f'Enligt forskning av Westlund &amp; Wilhelmsson (2021) minskar fastighetsv\u00e4rden i n\u00e4rheten av '
+            f'Enligt forskning av Westlund &amp; Wilhelmsson (2025) minskar fastighetsv\u00e4rden i n\u00e4rheten av '
             f'vindkraftverk. F\u00f6r de {n_props} identifierade fastigheterna inom {radius_km:.0f} km fr\u00e5n de planerade '
             f'verken vid {proj_name} inneb\u00e4r detta en sammanlagd ber\u00e4knad v\u00e4rdef\u00f6rlust p\u00e5 ca {total_msek:.1f} MSEK '
             f'(vid ett antaget fastighetsv\u00e4rde p\u00e5 {assumed_value_tkr/1000:.1f} MSEK).', body_s))
@@ -463,7 +691,7 @@ def generate_ekonomi_pdf(project_info, turbines, properties, radius_m, assumed_v
     story.append(Paragraph(
         f'Antaget fastighetsv\u00e4rde: {assumed_value_tkr/1000:.1f} MSEK. '
         f'Modell: beta(d) = -0.281 * exp(-0.381 * d). '
-        f'K\u00e4lla: Westlund &amp; Wilhelmsson (2021), Sustainability 13, 6892.',
+        f'K\u00e4lla: Westlund &amp; Wilhelmsson (2025), Economic Analysis and Policy 87, 1452\u20131468.',
         ParagraphStyle('S', parent=styles['Normal'], fontSize=8, leading=10, textColor=grey)))
     story.append(Spacer(1, 16))
     story.append(Paragraph("<b>Slutsats</b>", heading_s))
@@ -473,7 +701,7 @@ def generate_ekonomi_pdf(project_info, turbines, properties, radius_m, assumed_v
             f'inom {radius_km:.0f} km med en total v\u00e4rdeminskning p\u00e5 {total_msek:.1f} MSEK.', body_s))
     story.append(Spacer(1, 20))
     story.append(Paragraph(f"Genererad: {today}", italic_s))
-    story.append(Paragraph("K\u00e4lla: Westlund &amp; Wilhelmsson (2021), Sustainability, 13, 6892.", italic_s))
+    story.append(Paragraph("K\u00e4lla: Westlund &amp; Wilhelmsson (2025), Economic Analysis and Policy, 87, 1452\u20131468.", italic_s))
     story.append(Paragraph("Kartdata: Lantm\u00e4teriet CC BY 4.0, OpenStreetMap (ODbL)", italic_s))
 
     doc.build(story, onFirstPage=page_footer, onLaterPages=page_footer)
@@ -514,7 +742,7 @@ def generate_html_map(project_info, turbines, polygon, properties, radius_m, ass
 <div style="color:#666">{proj_name}, {kommun}</div>
 <div class="total"><div>Total v\u00e4rdef\u00f6rlust</div><div class="amt">{total_msek:.1f} MSEK</div>
 <div style="font-size:11px">{len(turbines)} verk | {n_props} fastigheter</div></div>
-<div style="font-size:10px;color:#999">Modell: Westlund &amp; Wilhelmsson (2021)<br>Kartdata: Lantm\u00e4teriet, OSM</div>
+<div style="font-size:10px;color:#999">Modell: Westlund &amp; Wilhelmsson (2025)<br>Kartdata: Lantm\u00e4teriet, OSM</div>
 </div>
 <script>
 const T={turbines_js}, P={props_js}, A={polygon_js};
@@ -565,7 +793,7 @@ with st.sidebar:
                          disabled=not project_name.strip())
 
     st.markdown("---")
-    st.markdown("**Modell:** Westlund & Wilhelmsson (2021)\n\n"
+    st.markdown("**Modell:** Westlund & Wilhelmsson (2025)\n\n"
                 "**Data:** Vindbrukskollen, OpenStreetMap\n\n"
                 "**Kartor:** Lantm\u00e4teriet CC BY 4.0")
 
@@ -717,7 +945,10 @@ if run_btn and project_name.strip():
         st.write(f"**{len(places)}** platser")
 
         st.write("Ber\u00e4knar v\u00e4rdereduktion...")
-        properties = analyze_properties(turbines, places, radius_m)
+        kommun = project_info.get("KOMNAMN", "")
+        region = get_nuts1_region(kommun)
+        st.write(f"Region: **{get_nuts1_label(region)}** ({kommun})")
+        properties = analyze_properties(turbines, places, radius_m, region)
         st.write(f"**{len(properties)}** fastigheter inom {radius_m/1000:.0f} km")
 
         st.write("Genererar rapporter...")
@@ -732,7 +963,7 @@ if run_btn and project_name.strip():
         pdf2 = os.path.join(out_dir, f"vindkraft_ekonomisk_analys_{safe}.pdf")
         html_path = os.path.join(out_dir, f"vindkraft_karta_{safe}.html")
 
-        generate_fastigheter_pdf(project_info, turbines, properties, radius_m, pdf1)
+        generate_fastigheter_pdf(project_info, turbines, properties, radius_m, pdf1, region)
         generate_ekonomi_pdf(project_info, turbines, properties, radius_m, assumed_value, pdf2)
 
         html_content = generate_html_map(project_info, turbines, polygon, properties, radius_m, assumed_value)
@@ -746,7 +977,7 @@ if run_btn and project_name.strip():
         "properties": properties, "radius_m": radius_m, "assumed_value": assumed_value,
         "center_lat": center_lat, "center_lon": center_lon,
         "pdf1": pdf1, "pdf2": pdf2, "html_path": html_path,
-        "out_dir": out_dir,
+        "out_dir": out_dir, "region": region,
     }
 
 
@@ -867,23 +1098,39 @@ if r:
                 f"{t['status']}" + (f", {t['total_height']}m" if t.get('total_height') else ""))
 
     with st.expander("Om modellen"):
-        st.markdown("""**Westlund & Wilhelmsson (2021)** \u2014 *Sustainability*, 13, 6892.
+        reg_label = get_nuts1_label(r.get("region", "south"))
+        st.markdown(f"""**Westlund & Wilhelmsson (2025)** \u2014 *Economic Analysis and Policy*, 87, 1452\u20131468.
 
-Beta(d) = -0.2811 \u00d7 exp(-0.3811 \u00d7 d), Reduktion = (exp(beta) - 1) \u00d7 100%
+Hedonisk prismodell med staggered difference-in-difference, baserad p\u00e5 \u00f6ver 600 000
+fastighetsf\u00f6rs\u00e4ljningar i Sverige 2005\u20132018. Regionalt differentierad (NUTS1).
 
-D\u00e4r d = avst\u00e5nd i km till n\u00e4rmaste vindkraftverk.""")
+Reduktion = 100 \u00d7 [exp(\u03b2) \u2013 1] %, d\u00e4r \u03b2 fr\u00e5n Table 3 per 2 km-band och region.
+
+| Avst\u00e5nd | Syd | \u00d6st | Norr |
+|---|---|---|---|
+| 0\u20132 km | \u221216.7% | \u22128.7% | \u221212.0% |
+| 2\u20134 km | \u221210.5% | \u22129.7% | ej sign. |
+| 4\u20136 km | ej sign. | \u22124.5% | ej sign. |
+
+**Region f\u00f6r detta projekt:** {reg_label}""")
 
 else:
     st.info("Skriv ett projektnamn och klicka **K\u00f6r analys** f\u00f6r att b\u00f6rja.")
     st.markdown("""
 #### S\u00e5 fungerar det
-1. Ange projektnamn från Vindbrukskollen (t.ex. *Strängsered*, *Marbäck*, *Kesemossen*)
-2. Justera radie och fastighetsvärde vid behov
-3. Klicka **Kör analys**
-4. Ladda ner PDF-rapporter och interaktiv karta
+1. Ange projektnamn fr\u00e5n Vindbrukskollen (t.ex. *Str\u00e4ngsered*, *Marb\u00e4ck*, *Kesemossen*)
+2. Justera radie och fastighetsv\u00e4rde vid behov
+3. Anv\u00e4nd **Statusfilter** f\u00f6r att s\u00f6ka bland t.ex. *Avslagna* eller *Inte aktuella* projekt
+4. Klicka **K\u00f6r analys**
+5. Ladda ner PDF-rapporter och interaktiv karta
 
-#### Datakällor
-- **Vindbrukskollen** (Länsstyrelsen) — vindkraftverkspositioner
-- **OpenStreetMap** — namngivna platser/fastigheter
-- **Lantmäteriet** — topografisk karta (CC BY 4.0)
+#### Modell
+Westlund & Wilhelmsson (2025) \u2014 regionalt differentierad hedonisk prismodell
+baserad p\u00e5 \u00f6ver 600 000 fastighetsf\u00f6rs\u00e4ljningar i Sverige 2005\u20132018.
+Regionen (Syd/\u00d6st/Norr) best\u00e4ms automatiskt fr\u00e5n projektets kommun.
+
+#### Datak\u00e4llor
+- **Vindbrukskollen** (L\u00e4nsstyrelsen) \u2014 vindkraftverkspositioner
+- **OpenStreetMap** \u2014 namngivna platser/fastigheter
+- **Lantm\u00e4teriet** \u2014 topografisk karta (CC BY 4.0)
     """)
