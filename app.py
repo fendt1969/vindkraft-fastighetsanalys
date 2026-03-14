@@ -51,8 +51,8 @@ WW2021_A = -0.2811
 WW2021_B = -0.3811
 
 MODEL_OPTIONS = {
-    "W&W 2025 Regional": "ww2025",
     "W&W 2021 National": "ww2021",
+    "W&W 2025 Regional": "ww2025",
 }
 
 # kommun → NUTS1 region mapping via län
