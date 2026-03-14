@@ -334,6 +334,7 @@ def calc_reduction_pct_2025(distance_km, region="south"):
     """Interpolate reduction % from W&W 2025 Table 3 regional coefficients.
 
     Uses linear interpolation between 2-km band midpoints.
+    Enforces monotonicity: closer distances always have >= reduction of farther ones.
     Returns negative percentage (e.g. -16.7).
     """
     coeff = WW2025_COEFF.get(region, WW2025_COEFF["south"])
@@ -344,14 +345,20 @@ def calc_reduction_pct_2025(distance_km, region="south"):
     midpoints = sorted(coeff.keys())
     reductions = [100 * (math.exp(coeff[m]) - 1) for m in midpoints]
 
+    # Enforce monotonicity: if a farther band has a MORE negative reduction
+    # than a closer band, pull the closer band down to match.
+    # (e.g. East: 0-2km=-8.7%, 2-4km=-9.7% → both become -9.7%)
+    for j in range(len(reductions) - 1):
+        if reductions[j + 1] < reductions[j]:
+            reductions[j] = reductions[j + 1]
+
     if distance_km <= midpoints[0]:
-        # Closer than first midpoint: use first band value
         return reductions[0]
 
     # Beyond last significant midpoint: taper to zero at midpoint + 2 km
     last_mp = midpoints[-1]
     last_red = reductions[-1]
-    taper_end = last_mp + 2.0  # effect reaches zero 2 km past last midpoint
+    taper_end = last_mp + 2.0
 
     if distance_km >= taper_end:
         return 0.0
@@ -690,7 +697,7 @@ def generate_ekonomi_pdf(project_info, turbines, properties, radius_m, assumed_v
     story.append(Spacer(1, 10))
     story.append(Paragraph(
         f'Antaget fastighetsv\u00e4rde: {assumed_value_tkr/1000:.1f} MSEK. '
-        f'Modell: beta(d) = -0.281 * exp(-0.381 * d). '
+        f'Modell: W&amp;W 2025 regional (Table 3, NUTS1). '
         f'K\u00e4lla: Westlund &amp; Wilhelmsson (2025), Economic Analysis and Policy 87, 1452\u20131468.',
         ParagraphStyle('S', parent=styles['Normal'], fontSize=8, leading=10, textColor=grey)))
     story.append(Spacer(1, 16))
