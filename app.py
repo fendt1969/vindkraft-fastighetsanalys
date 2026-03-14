@@ -44,6 +44,17 @@ WW2025_COEFF = {
     "north": {1: -0.128},                              # sign. 0-2 only
 }
 
+# ─── W&W 2021 National Model ─────────────────────────────────────────────
+# Westlund & Wilhelmsson (2021): β(d) = −0.2811 × exp(−0.3811 × d)
+# ~69,000 transactions, 2013-2018, hedonic cross-section, single national curve.
+WW2021_A = -0.2811
+WW2021_B = -0.3811
+
+MODEL_OPTIONS = {
+    "W&W 2025 Regional": "ww2025",
+    "W&W 2021 National": "ww2021",
+}
+
 # kommun → NUTS1 region mapping via län
 # SE2 = south, SE1 = east, SE3 = north
 _LAN_NUTS1 = {
@@ -328,56 +339,51 @@ def fetch_properties(center_lat, center_lon, search_radius_m=4500):
     return places
 
 
-# ─── Model (W&W 2025 Regional) ────────────────────────────────────────────
+# ─── Models ──────────────────────────────────────────────────────────────
 
 def calc_reduction_pct_2025(distance_km, region="south"):
-    """Interpolate reduction % from W&W 2025 Table 3 regional coefficients.
-
-    Uses linear interpolation between 2-km band midpoints.
-    Enforces monotonicity: closer distances always have >= reduction of farther ones.
-    Returns negative percentage (e.g. -16.7).
-    """
+    """W&W 2025: regional coefficients per 2-km band with monotonicity enforcement."""
     coeff = WW2025_COEFF.get(region, WW2025_COEFF["south"])
     if not coeff:
         return 0.0
-
-    # Sorted midpoints and their % reductions
     midpoints = sorted(coeff.keys())
     reductions = [100 * (math.exp(coeff[m]) - 1) for m in midpoints]
-
-    # Enforce monotonicity: if a farther band has a MORE negative reduction
-    # than a closer band, pull the closer band down to match.
-    # (e.g. East: 0-2km=-8.7%, 2-4km=-9.7% → both become -9.7%)
+    # Enforce monotonicity: closer bands >= farther bands
     for j in range(len(reductions) - 1):
         if reductions[j + 1] < reductions[j]:
             reductions[j] = reductions[j + 1]
-
     if distance_km <= midpoints[0]:
         return reductions[0]
-
-    # Beyond last significant midpoint: taper to zero at midpoint + 2 km
     last_mp = midpoints[-1]
     last_red = reductions[-1]
     taper_end = last_mp + 2.0
-
     if distance_km >= taper_end:
         return 0.0
-
-    # Interpolate between midpoints
     for j in range(len(midpoints) - 1):
         if midpoints[j] <= distance_km <= midpoints[j + 1]:
             t = (distance_km - midpoints[j]) / (midpoints[j + 1] - midpoints[j])
             return reductions[j] + t * (reductions[j + 1] - reductions[j])
-
-    # Between last midpoint and taper end
     if distance_km > last_mp:
         t = (distance_km - last_mp) / (taper_end - last_mp)
         return last_red * (1 - t)
-
     return 0.0
 
 
-def analyze_properties(turbines, places, max_radius_m, region="south"):
+def calc_reduction_pct_2021(distance_km):
+    """W&W 2021: single national exponential curve."""
+    beta = WW2021_A * math.exp(WW2021_B * distance_km)
+    pct = 100 * (math.exp(beta) - 1)
+    return pct if pct < -0.1 else 0.0  # cut off near-zero tail
+
+
+def calc_reduction_pct(distance_km, model="ww2025", region="south"):
+    """Dispatch to selected model."""
+    if model == "ww2021":
+        return calc_reduction_pct_2021(distance_km)
+    return calc_reduction_pct_2025(distance_km, region)
+
+
+def analyze_properties(turbines, places, max_radius_m, region="south", model="ww2025"):
     results = []
     for place in places:
         min_dist = float("inf")
@@ -389,7 +395,7 @@ def analyze_properties(turbines, places, max_radius_m, region="south"):
                 nearest = i
         if min_dist <= max_radius_m:
             dist_km = min_dist / 1000.0
-            red_pct = calc_reduction_pct_2025(dist_km, region)
+            red_pct = calc_reduction_pct(dist_km, model, region)
             results.append({
                 "name": place["name"], "lat": place["lat"], "lon": place["lon"],
                 "distance_m": round(min_dist), "nearest_turbine": nearest,
@@ -401,7 +407,7 @@ def analyze_properties(turbines, places, max_radius_m, region="south"):
 
 # ─── PDF Generation ──────────────────────────────────────────────────────
 
-def generate_fastigheter_pdf(project_info, turbines, properties, radius_m, output_path, region="south"):
+def generate_fastigheter_pdf(project_info, turbines, properties, radius_m, output_path, region="south", model="ww2025"):
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import cm
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -428,13 +434,16 @@ def generate_fastigheter_pdf(project_info, turbines, properties, radius_m, outpu
             d = haversine_m(t1["lat"], t1["lon"], t2["lat"], t2["lon"])
             if d > max_inter: max_inter = d
 
+    model_tag = f"W&W 2025 regional ({get_nuts1_label(region)})" if model == "ww2025" else "W&W 2021 national"
+    model_tag_html = f"W&amp;W 2025 regional ({get_nuts1_label(region)})" if model == "ww2025" else "W&amp;W 2021 national"
+
     page_num = [0]
     def page_footer(canvas, doc):
         page_num[0] += 1
         canvas.saveState()
         canvas.setFont("Helvetica", 8); canvas.setFillColor(grey)
         canvas.drawCentredString(A4[0]/2, A4[1]-20, "Vindkraftens inverkan p\u00e5 fastighetsv\u00e4rden")
-        canvas.drawCentredString(A4[0]/2, A4[1]-32, f"{proj_name}, {kommun} kommun \u2014 W&W 2025 regional ({get_nuts1_label(region)}), {radius_km:.0f} km radie")
+        canvas.drawCentredString(A4[0]/2, A4[1]-32, f"{proj_name}, {kommun} kommun \u2014 {model_tag}, {radius_km:.0f} km radie")
         canvas.drawCentredString(A4[0]/2, 25, f"Sida {page_num[0]}")
         canvas.restoreState()
 
@@ -449,7 +458,7 @@ def generate_fastigheter_pdf(project_info, turbines, properties, radius_m, outpu
 
     story = []
     story.append(Paragraph("Vindkraftens inverkan p\u00e5 fastighetsv\u00e4rden", title_s))
-    story.append(Paragraph(f"{proj_name}, {kommun} kommun \u2014 W&amp;W 2025 regional ({get_nuts1_label(region)}), {radius_km:.0f} km radie", subtitle_s))
+    story.append(Paragraph(f"{proj_name}, {kommun} kommun \u2014 {model_tag_html}, {radius_km:.0f} km radie", subtitle_s))
 
     # Section 1: Turbines
     story.append(Paragraph("<b>1. Planerade vindkraftverk</b>", heading_s))
@@ -465,51 +474,64 @@ def generate_fastigheter_pdf(project_info, turbines, properties, radius_m, outpu
 
     # Section 2: Method
     story.append(Paragraph("<b>2. Metod och modell</b>", heading_s))
-    story.append(Paragraph('K\u00e4lla: Westlund &amp; Wilhelmsson (2025), "Capitalisation of onshore wind turbines on property prices in Sweden: The need to compensate for negative externalities", <i>Economic Analysis and Policy</i>, 87, 1452\u20131468.', body_s))
-    story.append(Spacer(1, 4))
-    story.append(Paragraph('Studien anv\u00e4nder en hedonisk prismodell med staggered difference-in-difference baserad p\u00e5 \u00f6ver 600 000 fastighetsf\u00f6rs\u00e4ljningar i Sverige 2005\u20132018. Modellen \u00e4r regionalt differentierad (NUTS1: Syd, \u00d6st, Norr) med 2 km-intervaller.', body_s))
-    story.append(Spacer(1, 4))
-    story.append(Paragraph("Reduktion = 100 \u00d7 [exp(\u03b2) \u2013 1] %", code_s))
-    story.append(Paragraph(f"Region f\u00f6r detta projekt: {get_nuts1_label(region)}", body_s))
+    if model == "ww2025":
+        story.append(Paragraph('K\u00e4lla: Westlund &amp; Wilhelmsson (2025), "Capitalisation of onshore wind turbines on property prices in Sweden: The need to compensate for negative externalities", <i>Economic Analysis and Policy</i>, 87, 1452\u20131468.', body_s))
+        story.append(Spacer(1, 4))
+        story.append(Paragraph('Studien anv\u00e4nder en hedonisk prismodell med staggered difference-in-difference baserad p\u00e5 \u00f6ver 600 000 fastighetsf\u00f6rs\u00e4ljningar i Sverige 2005\u20132018. Modellen \u00e4r regionalt differentierad (NUTS1: Syd, \u00d6st, Norr) med 2 km-intervaller.', body_s))
+        story.append(Spacer(1, 4))
+        story.append(Paragraph("Reduktion = 100 \u00d7 [exp(\u03b2) \u2013 1] %", code_s))
+        story.append(Paragraph(f"Region f\u00f6r detta projekt: {get_nuts1_label(region)}", body_s))
+    else:
+        story.append(Paragraph('K\u00e4lla: Westlund &amp; Wilhelmsson (2021), hedonisk prismodell baserad p\u00e5 ca 69 000 sm\u00e5husf\u00f6rs\u00e4ljningar i Sverige 2013\u20132018.', body_s))
+        story.append(Spacer(1, 4))
+        story.append(Paragraph('Nationell exponentiell modell (ej regionalt differentierad):', body_s))
+        story.append(Paragraph("\u03b2(d) = \u22120.2811 \u00d7 exp(\u22120.3811 \u00d7 d)", code_s))
+        story.append(Paragraph("Reduktion = 100 \u00d7 [exp(\u03b2) \u2013 1] %", code_s))
     story.append(Spacer(1, 8))
 
-    # Section 3: Regional coefficients table
-    story.append(Paragraph("<b>3. Regionala koefficienter (Table 3, W&amp;W 2025)</b>", heading_s))
-    coeff_data = [["Avst\u00e5nd", "Syd (\u03b2)", "Syd %", "\u00d6st (\u03b2)", "\u00d6st %", "Norr (\u03b2)", "Norr %"]]
-    all_bands = [
-        ("0\u20132 km", {"south": -0.183, "east": -0.091, "north": -0.128}),
-        ("2\u20134 km", {"south": -0.111, "east": -0.102, "north": None}),
-        ("4\u20136 km", {"south": None, "east": -0.046, "north": None}),
-    ]
-    for label, betas in all_bands:
-        row = [label]
-        for reg in ["south", "east", "north"]:
-            b = betas.get(reg)
-            if b is not None:
-                row.append(f"{b:.3f}")
-                row.append(f"{100*(math.exp(b)-1):.1f}%")
-            else:
-                row.append("\u2013")
-                row.append("ej sign.")
-        coeff_data.append(row)
-    ctable = Table(coeff_data, colWidths=[55, 50, 50, 50, 50, 50, 50])
-    ctable.setStyle(TableStyle([
-        ('FONT', (0,0), (-1,0), 'Helvetica-Bold', 7.5), ('FONT', (0,1), (-1,-1), 'Helvetica', 7.5),
-        ('ALIGN', (1,0), (-1,-1), 'CENTER'), ('ALIGN', (0,0), (0,-1), 'LEFT'),
-        ('LINEBELOW', (0,0), (-1,0), 0.5, black), ('LINEBELOW', (0,-1), (-1,-1), 0.5, black),
-        ('TOPPADDING', (0,0), (-1,-1), 2), ('BOTTOMPADDING', (0,0), (-1,-1), 2),
-    ]))
-    story.append(ctable)
-    story.append(Spacer(1, 4))
-    story.append(Paragraph('Enbart statistiskt signifikanta koefficienter (p&lt;0,05) anv\u00e4nds. Linj\u00e4r interpolering mellan bandmittpunkter.', italic_s))
+    # Section 3: Coefficients
+    if model == "ww2025":
+        story.append(Paragraph("<b>3. Regionala koefficienter (Table 3, W&amp;W 2025)</b>", heading_s))
+        coeff_data = [["Avst\u00e5nd", "Syd (\u03b2)", "Syd %", "\u00d6st (\u03b2)", "\u00d6st %", "Norr (\u03b2)", "Norr %"]]
+        all_bands = [
+            ("0\u20132 km", {"south": -0.183, "east": -0.091, "north": -0.128}),
+            ("2\u20134 km", {"south": -0.111, "east": -0.102, "north": None}),
+            ("4\u20136 km", {"south": None, "east": -0.046, "north": None}),
+        ]
+        for label, betas in all_bands:
+            row = [label]
+            for reg in ["south", "east", "north"]:
+                b = betas.get(reg)
+                if b is not None:
+                    row.append(f"{b:.3f}")
+                    row.append(f"{100*(math.exp(b)-1):.1f}%")
+                else:
+                    row.append("\u2013")
+                    row.append("ej sign.")
+            coeff_data.append(row)
+        ctable = Table(coeff_data, colWidths=[55, 50, 50, 50, 50, 50, 50])
+        ctable.setStyle(TableStyle([
+            ('FONT', (0,0), (-1,0), 'Helvetica-Bold', 7.5), ('FONT', (0,1), (-1,-1), 'Helvetica', 7.5),
+            ('ALIGN', (1,0), (-1,-1), 'CENTER'), ('ALIGN', (0,0), (0,-1), 'LEFT'),
+            ('LINEBELOW', (0,0), (-1,0), 0.5, black), ('LINEBELOW', (0,-1), (-1,-1), 0.5, black),
+            ('TOPPADDING', (0,0), (-1,-1), 2), ('BOTTOMPADDING', (0,0), (-1,-1), 2),
+        ]))
+        story.append(ctable)
+        story.append(Spacer(1, 4))
+        story.append(Paragraph('Enbart statistiskt signifikanta koefficienter (p&lt;0,05) anv\u00e4nds. Linj\u00e4r interpolering mellan bandmittpunkter.', italic_s))
+    else:
+        story.append(Paragraph("<b>3. Modellparametrar (W&amp;W 2021)</b>", heading_s))
+        story.append(Paragraph("A = \u22120.2811, B = \u22120.3811", code_s))
+        story.append(Paragraph("Exponentiell avtagande kurva, ~24% vid 0 km, avtar till ~0% vid ~8 km.", body_s))
     story.append(Spacer(1, 10))
 
-    # Section 4: Reduction curve for this region
-    story.append(Paragraph(f"<b>4. Reduktionskurva \u2014 {get_nuts1_label(region)} (0\u2013{radius_km:.0f} km)</b>", heading_s))
+    # Section 4: Reduction curve
+    curve_label = get_nuts1_label(region) if model == "ww2025" else "Nationell"
+    story.append(Paragraph(f"<b>4. Reduktionskurva \u2014 {curve_label} (0\u2013{radius_km:.0f} km)</b>", heading_s))
     rdata = [["Avst\u00e5nd", "Reduktion"]]
     for d_m in range(0, radius_m + 1, 250):
         d_km = d_m / 1000.0
-        r = calc_reduction_pct_2025(d_km, region)
+        r = calc_reduction_pct(d_km, model, region)
         rdata.append([f"{d_m} m", f"{r:.1f}%"])
     rtable = Table(rdata, colWidths=[80, 80])
     rtable.setStyle(TableStyle([
@@ -557,13 +579,16 @@ def generate_fastigheter_pdf(project_info, turbines, properties, radius_m, outpu
     story.append(Paragraph(f"\u00a0\u00a0\u00a0- Medelv\u00e4rde: -{avg_red:.1f}%", body_s))
     story.append(Spacer(1, 16))
     story.append(Paragraph(f"Genererad: {today}", italic_s))
-    story.append(Paragraph("K\u00e4lla: Westlund &amp; Wilhelmsson (2025), Economic Analysis and Policy, 87, 1452\u20131468.", italic_s))
+    if model == "ww2025":
+        story.append(Paragraph("K\u00e4lla: Westlund &amp; Wilhelmsson (2025), Economic Analysis and Policy, 87, 1452\u20131468.", italic_s))
+    else:
+        story.append(Paragraph("K\u00e4lla: Westlund &amp; Wilhelmsson (2021), hedonisk prismodell, 69 000 transaktioner.", italic_s))
     story.append(Paragraph("Kartdata: Lantm\u00e4teriet CC BY 4.0, OpenStreetMap (ODbL)", italic_s))
 
     doc.build(story, onFirstPage=page_footer, onLaterPages=page_footer)
 
 
-def generate_ekonomi_pdf(project_info, turbines, properties, radius_m, assumed_value_tkr, output_path):
+def generate_ekonomi_pdf(project_info, turbines, properties, radius_m, assumed_value_tkr, output_path, model="ww2025", region="south"):
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import cm
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -697,8 +722,8 @@ def generate_ekonomi_pdf(project_info, turbines, properties, radius_m, assumed_v
     story.append(Spacer(1, 10))
     story.append(Paragraph(
         f'Antaget fastighetsv\u00e4rde: {assumed_value_tkr/1000:.1f} MSEK. '
-        f'Modell: W&amp;W 2025 regional (Table 3, NUTS1). '
-        f'K\u00e4lla: Westlund &amp; Wilhelmsson (2025), Economic Analysis and Policy 87, 1452\u20131468.',
+        f'Modell: {"W&amp;W 2025 regional (Table 3, NUTS1)" if model == "ww2025" else "W&amp;W 2021 national"}. '
+        f'K\u00e4lla: Westlund &amp; Wilhelmsson ({"2025" if model == "ww2025" else "2021"}).',
         ParagraphStyle('S', parent=styles['Normal'], fontSize=8, leading=10, textColor=grey)))
     story.append(Spacer(1, 16))
     story.append(Paragraph("<b>Slutsats</b>", heading_s))
@@ -708,7 +733,10 @@ def generate_ekonomi_pdf(project_info, turbines, properties, radius_m, assumed_v
             f'inom {radius_km:.0f} km med en total v\u00e4rdeminskning p\u00e5 {total_msek:.1f} MSEK.', body_s))
     story.append(Spacer(1, 20))
     story.append(Paragraph(f"Genererad: {today}", italic_s))
-    story.append(Paragraph("K\u00e4lla: Westlund &amp; Wilhelmsson (2025), Economic Analysis and Policy, 87, 1452\u20131468.", italic_s))
+    if model == "ww2025":
+        story.append(Paragraph("K\u00e4lla: Westlund &amp; Wilhelmsson (2025), Economic Analysis and Policy, 87, 1452\u20131468.", italic_s))
+    else:
+        story.append(Paragraph("K\u00e4lla: Westlund &amp; Wilhelmsson (2021), hedonisk prismodell, 69 000 transaktioner.", italic_s))
     story.append(Paragraph("Kartdata: Lantm\u00e4teriet CC BY 4.0, OpenStreetMap (ODbL)", italic_s))
 
     doc.build(story, onFirstPage=page_footer, onLaterPages=page_footer)
@@ -792,6 +820,11 @@ with st.sidebar:
     assumed_value = st.number_input("Antaget fastighetsv\u00e4rde (tkr)",
         min_value=500, max_value=20000, value=DEFAULT_ASSUMED_VALUE_TKR, step=500)
 
+    model_label = st.selectbox("Modell", options=list(MODEL_OPTIONS.keys()),
+        help="W&W 2025: regional (Syd/\u00d6st/Norr), diff-in-diff, 600k transaktioner.\n"
+             "W&W 2021: nationell exponentiell kurva, 69k transaktioner.")
+    model_key = MODEL_OPTIONS[model_label]
+
     status_options = list(TURBINE_LAYERS.values())
     status_filter = st.multiselect("Statusfilter (verk)", options=status_options, default=[],
         help="L\u00e4mna tomt f\u00f6r alla statusar")
@@ -800,7 +833,7 @@ with st.sidebar:
                          disabled=not project_name.strip())
 
     st.markdown("---")
-    st.markdown("**Modell:** Westlund & Wilhelmsson (2025)\n\n"
+    st.markdown(f"**Modell:** {model_label}\n\n"
                 "**Data:** Vindbrukskollen, OpenStreetMap\n\n"
                 "**Kartor:** Lantm\u00e4teriet CC BY 4.0")
 
@@ -954,8 +987,11 @@ if run_btn and project_name.strip():
         st.write("Ber\u00e4knar v\u00e4rdereduktion...")
         kommun = project_info.get("KOMNAMN", "")
         region = get_nuts1_region(kommun)
-        st.write(f"Region: **{get_nuts1_label(region)}** ({kommun})")
-        properties = analyze_properties(turbines, places, radius_m, region)
+        if model_key == "ww2025":
+            st.write(f"Modell: **W&W 2025 Regional** \u2014 {get_nuts1_label(region)} ({kommun})")
+        else:
+            st.write(f"Modell: **W&W 2021 National** ({kommun})")
+        properties = analyze_properties(turbines, places, radius_m, region, model_key)
         st.write(f"**{len(properties)}** fastigheter inom {radius_m/1000:.0f} km")
 
         st.write("Genererar rapporter...")
@@ -970,8 +1006,8 @@ if run_btn and project_name.strip():
         pdf2 = os.path.join(out_dir, f"vindkraft_ekonomisk_analys_{safe}.pdf")
         html_path = os.path.join(out_dir, f"vindkraft_karta_{safe}.html")
 
-        generate_fastigheter_pdf(project_info, turbines, properties, radius_m, pdf1, region)
-        generate_ekonomi_pdf(project_info, turbines, properties, radius_m, assumed_value, pdf2)
+        generate_fastigheter_pdf(project_info, turbines, properties, radius_m, pdf1, region, model_key)
+        generate_ekonomi_pdf(project_info, turbines, properties, radius_m, assumed_value, pdf2, model_key, region)
 
         html_content = generate_html_map(project_info, turbines, polygon, properties, radius_m, assumed_value)
         with open(html_path, "w", encoding="utf-8") as f:
@@ -984,7 +1020,7 @@ if run_btn and project_name.strip():
         "properties": properties, "radius_m": radius_m, "assumed_value": assumed_value,
         "center_lat": center_lat, "center_lon": center_lon,
         "pdf1": pdf1, "pdf2": pdf2, "html_path": html_path,
-        "out_dir": out_dir, "region": region,
+        "out_dir": out_dir, "region": region, "model": model_key,
     }
 
 
@@ -1105,8 +1141,10 @@ if r:
                 f"{t['status']}" + (f", {t['total_height']}m" if t.get('total_height') else ""))
 
     with st.expander("Om modellen"):
+        cur_model = r.get("model", "ww2025")
         reg_label = get_nuts1_label(r.get("region", "south"))
-        st.markdown(f"""**Westlund & Wilhelmsson (2025)** \u2014 *Economic Analysis and Policy*, 87, 1452\u20131468.
+        if cur_model == "ww2025":
+            st.markdown(f"""**Westlund & Wilhelmsson (2025)** \u2014 *Economic Analysis and Policy*, 87, 1452\u20131468.
 
 Hedonisk prismodell med staggered difference-in-difference, baserad p\u00e5 \u00f6ver 600 000
 fastighetsf\u00f6rs\u00e4ljningar i Sverige 2005\u20132018. Regionalt differentierad (NUTS1).
@@ -1120,6 +1158,24 @@ Reduktion = 100 \u00d7 [exp(\u03b2) \u2013 1] %, d\u00e4r \u03b2 fr\u00e5n Table
 | 4\u20136 km | ej sign. | \u22124.5% | ej sign. |
 
 **Region f\u00f6r detta projekt:** {reg_label}""")
+        else:
+            st.markdown("""**Westlund & Wilhelmsson (2021)** \u2014 hedonisk prismodell.
+
+Baserad p\u00e5 ca 69 000 sm\u00e5husf\u00f6rs\u00e4ljningar i Sverige 2013\u20132018.
+Nationell exponentiell modell (ej regionalt differentierad).
+
+\u03b2(d) = \u22120.2811 \u00d7 exp(\u22120.3811 \u00d7 d)
+
+Reduktion = 100 \u00d7 [exp(\u03b2) \u2013 1] %
+
+| Avst\u00e5nd | Reduktion |
+|---|---|
+| 0 km | \u221224.4% |
+| 1 km | \u221219.1% |
+| 2 km | \u221214.5% |
+| 3 km | \u221210.7% |
+| 5 km | \u22125.2% |
+| 8 km | ~0% |""")
 
 else:
     st.info("Skriv ett projektnamn och klicka **K\u00f6r analys** f\u00f6r att b\u00f6rja.")
@@ -1131,10 +1187,14 @@ else:
 4. Klicka **K\u00f6r analys**
 5. Ladda ner PDF-rapporter och interaktiv karta
 
-#### Modell
-Westlund & Wilhelmsson (2025) \u2014 regionalt differentierad hedonisk prismodell
-baserad p\u00e5 \u00f6ver 600 000 fastighetsf\u00f6rs\u00e4ljningar i Sverige 2005\u20132018.
-Regionen (Syd/\u00d6st/Norr) best\u00e4ms automatiskt fr\u00e5n projektets kommun.
+#### Modeller
+**W&W 2025 Regional** (standard): staggered diff-in-diff, 600 000+ transaktioner,
+regionalt differentierad (Syd/\u00d6st/Norr). Region best\u00e4ms automatiskt fr\u00e5n projektets kommun.
+
+**W&W 2021 National**: exponentiell kurva, 69 000 transaktioner, en modell f\u00f6r hela Sverige.
+Ger generellt h\u00f6gre reduktion \u00e4n 2025-modellen.
+
+V\u00e4lj modell i sidopanelen under **Modell**.
 
 #### Datak\u00e4llor
 - **Vindbrukskollen** (L\u00e4nsstyrelsen) \u2014 vindkraftverkspositioner
